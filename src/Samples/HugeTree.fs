@@ -1,17 +1,19 @@
+#if INTERACTIVE
+// Some code that executes only in FSI
+#r "nuget: Bogus"
+#else
 namespace Samples
+#endif
 
 module Tree =
     open System
 
-    let rand = Random()
-
-    type Leaf = {| Id: Guid; Name: string |}
+    type Leaf = { Id: Guid; Name: string }
 
     type Node =
-        {| Id: Guid
-           Name: string
-           IsExpand: bool
-           Children: Tree seq |}
+        { Id: Guid
+          Name: string
+          SubTree: Tree seq }
 
     and Tree =
         | Leaf of Leaf
@@ -27,60 +29,55 @@ module Tree =
             | Leaf l -> l.Name
             | Node n -> n.Name
 
-    let rec cata fLeaf fNode item =
-        let recurse = cata fLeaf fNode
 
-        match item with
-        | Leaf leaf -> fLeaf leaf
-        | Node node ->
-            let children' = node.Children |> Seq.map recurse
+    let createLeaf name = { Id = Guid.NewGuid(); Name = name }
 
-            fNode
-                {| Id = node.Id
-                   Name = node.Name
-                   IsExpand = node.IsExpand
-                   Children' = children' |}
+    let createNode name subTree =
+        { Id = Guid.NewGuid()
+          Name = name
+          SubTree = subTree }
+
+    let rec update (targetId: Guid) (newValue: Tree) (tree: Tree) =
+        match tree with
+        | _ when tree.Id = targetId -> newValue
+        | Leaf _ as leaf -> leaf
+        | Node n -> Node { n with SubTree = n.SubTree |> Seq.map (update targetId newValue) }
 
 
-    let update (tree: Tree) (oldTree: Tree) (newTree: Tree) =
-
-        cata
-            (fun l ->
-                if l.Id = oldTree.Id then
-                    newTree
-                else
-                    Leaf l)
-            (fun n' ->
-                if n'.Id = oldTree.Id then
-                    oldTree
-                else
-                    {| Id = n'.Id
-                       Name = n'.Name
-                       IsExpand = n'.IsExpand
-                       Children = n'.Children' |}
-                    |> Node)
-            tree
-
-    let rec remove (trees: Tree seq) (removeTree: Tree) =
+    let rec remove (trees: Tree seq) (targetId: Guid) =
         trees
         |> Seq.choose (fun tree ->
             match tree with
-            | _ when tree.Id = removeTree.Id -> None
+            | _ when tree.Id = targetId -> None
             | Leaf _ as leaf -> Some leaf
             | Node node ->
-                {| node with
-                    Children = remove node.Children removeTree |}
+                { node with SubTree = remove node.SubTree targetId }
                 |> Node
                 |> Some)
 
-// match tree with
-// | _ when tree.Id = oldTree.Id -> newTree
-// | Leaf _ -> tree
-// | Node n ->
-//     {| n with
-//         Children =
-//             seq {
-//                 for child in n.Children do
-//                     update child oldTree newTree
-//             } |}
-//     |> Node
+
+module Share =
+    let fakar = Bogus.Faker "ja"
+    let random = System.Random()
+
+    module rec Fakar =
+        let fullName () =
+            $"{fakar.Name.LastName()} {fakar.Name.FirstName()}"
+
+        let leaf = fullName >> Tree.createLeaf >> Tree.Leaf
+
+        let node subTree =
+            subTree
+            |> Tree.createNode (fullName ())
+            |> Tree.Node
+
+        let generate max =
+            let generators = [ leaf; fun () -> generate max |> node ]
+
+            seq {
+                for _ = 0 to random.Next max do
+                    for _ = 0 to random.Next max do
+                        generators[ generators.Length |> random.Next ] ()
+            }
+
+    let example = Fakar.generate 3 |> Seq.toList
