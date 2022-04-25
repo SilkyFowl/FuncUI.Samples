@@ -1,0 +1,32 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30114.105
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".paket", ".paket", "{CF2C64CB-B5D0-4669-A7C2-B0FDFFDEFA0B}"
+	ProjectSection(SolutionItems) = preProject
+		paket.dependencies = paket.dependencies
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2943E306-1953-4F6E-B856-E0A2C5906A5B}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Samples", "src\Samples\Samples.fsproj", "{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C} = {2943E306-1953-4F6E-B856-E0A2C5906A5B}
+	EndGlobalSection
+EndGlobal

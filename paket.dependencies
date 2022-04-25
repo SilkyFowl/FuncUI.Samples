@@ -1,0 +1,10 @@
+source https://api.nuget.org/v3/index.json
+
+storage: none
+framework: net6.0, netstandard2.0, netstandard2.1
+nuget Avalonia.Desktop 0.10.12
+nuget Avalonia.Diagnostics 0.10.12
+nuget FSharp.Core content: none
+nuget JaggerJo.Avalonia.FuncUI 0.5.0
+nuget JaggerJo.Avalonia.FuncUI.DSL 0.5.0
+nuget JaggerJo.Avalonia.FuncUI.Elmish 0.5.0
