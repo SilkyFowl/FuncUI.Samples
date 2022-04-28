@@ -13,9 +13,13 @@ module Shell =
             DockPanel.create [
 
                 DockPanel.children [
-                    TabControl.create [ 
+                    TabControl.create [
                         TabControl.tabStripPlacement Dock.Top
                         TabControl.viewItems [
+                            TabItem.create [
+                                TabItem.header "Huge Tree Sample"
+                                TabItem.content HugeTree.view
+                            ]
                             TabItem.create [
                                 TabItem.header "Counter Sample"
                                 TabItem.content Counter.view
