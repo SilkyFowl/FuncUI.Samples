@@ -47,7 +47,9 @@ module Shell =
             base.MinWidth <- 800.0
             base.MinHeight <- 600.0
             this.Content <- view
-
+#if DEBUG
+            this.AttachDevTools()
+#endif
             //this.VisualRoot.VisualRoot.Renderer.DrawFps <- true
             //this.VisualRoot.VisualRoot.Renderer.DrawDirtyRects <- true
 

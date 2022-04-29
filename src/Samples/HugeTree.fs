@@ -226,7 +226,6 @@ module Test =
         |> Seq.toList
 #else
 
-
 /// 大量のデータを扱えるTreeViewっぽいもの。
 /// AvaloniaのTreeViewは仮想化できないので大量のデータがあると遅い。
 /// https://github.com/AvaloniaUI/Avalonia/issues/6580
@@ -244,8 +243,7 @@ module HugeTree =
             HugeTreeViewItem.create<Share.Info, Share.Kind> (fun info -> info.Id) (fun kind -> kind.Id)
 
         let generateTreeViewItems max =
-            Share.Fakar.generate max
-            |> Seq.map toTreeViewItem
+            Share.Fakar.generate max |> Seq.map toTreeViewItem
 
         let initRoot max =
             Share.fromKind { Id = Guid.NewGuid(); Name = "root" } (Share.Fakar.generate max)
@@ -257,12 +255,17 @@ module HugeTree =
 
     open Avalonia
     open Avalonia.Controls
-    open Avalonia.Controls.Presenters
-    open Avalonia.VisualTree
+    open Avalonia.Controls.Primitives
+    open Avalonia.Controls.Templates
+    open Avalonia.Styling
     open Avalonia.Media
     open Avalonia.Layout
     open Avalonia.FuncUI
     open Avalonia.FuncUI.DSL
+    type TemplatedControl with
+        static member template(viewFunc: ITemplatedControl -> INameScope -> 'view) =
+            FuncControlTemplate(fun x scope -> viewFunc x scope |> VirtualDom.VirtualDom.create)
+            |> TemplatedControl.template
 
     let conterStyle = [ Control.verticalAlignment VerticalAlignment.Center ]
 
@@ -313,11 +316,31 @@ module HugeTree =
                 Grid.columnDefinitions "Auto,Auto,*"
 
                 Grid.children [
-                    CheckBox.create [
-                        CheckBox.column 0
-                        CheckBox.isChecked node.IsExpand
-                        CheckBox.onChecked (setSubtrees true)
-                        CheckBox.onUnchecked (setSubtrees false)
+                    ToggleButton.create [
+                        ToggleButton.column 0
+                        ToggleButton.isChecked node.IsExpand
+                        ToggleButton.onChecked (setSubtrees true)
+                        ToggleButton.onUnchecked (setSubtrees false)
+                        // 参考
+                        // https://github.com/AvaloniaUI/Avalonia/blob/master/src/Avalonia.Themes.Default/Controls/TreeViewItem.xaml#L43-L58
+                        ToggleButton.template (fun x scope ->
+                            Border.create [
+                                Border.height 14
+                                Border.width 12
+                                Border.verticalAlignment VerticalAlignment.Center
+                                Border.margin (0, 0, 8, 0)
+                                Border.background Brushes.Transparent
+                                Border.child (
+                                    Shapes.Path(
+                                        HorizontalAlignment = HorizontalAlignment.Center,
+                                        VerticalAlignment = VerticalAlignment.Center,
+                                        Fill = x.GetValue ContentControl.ForegroundProperty,
+                                        Data = Geometry.Parse "M 0 2 L 4 6 L 0 10 Z"
+                                    )
+                                )
+                                if node.IsExpand then
+                                    RotateTransform 45.0 |> Border.renderTransform
+                            ])
                     ]
                     Button.create [
                         Button.column 1
