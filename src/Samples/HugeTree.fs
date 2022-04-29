@@ -1,9 +1,4 @@
-#if INTERACTIVE
-// Some code that executes only in FSI
-#r "nuget: Bogus"
-#else
 namespace Samples
-#endif
 
 /// 参考:https://fsharpforfunandprofit.com/posts/recursive-types-and-folds-3b/#tree
 type Tree<'LeafData, 'INodeData> =
@@ -31,6 +26,8 @@ module Tree =
             let finalAccum = subtrees |> Seq.fold recurse localAccum
             // ... and return it
             finalAccum
+
+    let length = fold (fun i _ -> i + 1) (fun i _ -> i + 1) 0
 
     let rec map fLeaf fNode (tree: Tree<'LeafData, 'INodeData>) =
         let recurse = map fLeaf fNode
@@ -76,6 +73,145 @@ module Tree =
             InternalNode(nodeInfo, newSubtrees)
         | other -> other
 
+/// 大量のデータを扱えるTreeViewっぽいもの。
+/// AvaloniaのTreeViewは仮想化できないので大量のデータがあると遅い。
+/// https://github.com/AvaloniaUI/Avalonia/issues/6580
+///
+/// 対応するには仮想化できるItemRepeaterを使用する。
+/// https://github.com/kekekeks/example-avalonia-huge-tree/blob/master/AvaloniaHugeTree/MainWindow.xaml#L19-L36
+///
+/// この実装はコード量削減のためListBoxを使用。
+///
+module TreeBox =
+    open System
+    open Avalonia
+    open Avalonia.Controls
+    open Avalonia.Controls.Primitives
+    open Avalonia.Controls.Templates
+    open Avalonia.Styling
+    open Avalonia.Media
+    open Avalonia.Layout
+    open Avalonia.FuncUI
+    open Avalonia.FuncUI.DSL
+
+    type TemplatedControl with
+        static member template(viewFunc: ITemplatedControl -> INameScope -> 'view) =
+            FuncControlTemplate(fun x scope -> viewFunc x scope |> VirtualDom.VirtualDom.create)
+            |> TemplatedControl.template
+
+    type ExpandedTreeNode<'node> = { IsExpand: bool; Node: 'node }
+
+    type ExpandedTreeItem<'leaf, 'node> =
+        { Ids: Guid list
+          Data: Choice<'leaf, ExpandedTreeNode<'node>> }
+
+    let expandTree fNodeId (expandedSet: Set<Guid>) (trees: Tree<'leaf, 'node> seq) =
+        let rec loop state trees' =
+            trees'
+            |> Seq.map (function
+                | LeafNode leaf -> seq { { Ids = state; Data = Choice1Of2 leaf } }
+                | InternalNode (node, subTree) ->
+                    seq {
+                        let nodeId = fNodeId node
+                        let isExpand = expandedSet |> Set.contains nodeId
+
+                        { Ids = state
+                          Data = Choice2Of2 { IsExpand = isExpand; Node = node } }
+
+
+                        if expandedSet |> Set.contains nodeId then
+                            yield! loop (state @ List.singleton nodeId) subTree
+                    })
+            |> Seq.concat
+
+        loop [] trees
+
+    let create<'leaf, 'node>
+        fNodeId
+        fLeaf
+        (fNode: _ -> _ -> Types.IView<_>)
+        (items: IWritable<Tree<'leaf, 'node> seq>)
+        attrs
+        =
+        Component.create (
+            "tree-box",
+            fun ctx ->
+                let expandIdSet = ctx.useState (Set.empty, false)
+                let expandItems = ctx.useState Seq.empty
+
+                ctx.useEffect (
+                    (fun _ ->
+                        expandTree fNodeId expandIdSet.Current items.Current
+                        |> expandItems.Set),
+                    [ EffectTrigger.AfterInit
+                      EffectTrigger.AfterChange items
+                      EffectTrigger.AfterChange expandIdSet ]
+                )
+
+                ctx.attrs attrs
+
+                let viewFunc (data: ExpandedTreeItem<'leaf, 'node>) =
+                    let left = 4 + (24 * List.length data.Ids)
+
+                    Grid.create [
+                        Grid.margin (left, 4, 4, 4)
+                        match data.Data with
+                        | Choice1Of2 leaf -> Grid.children [ fLeaf data.Ids leaf ]
+                        | Choice2Of2 node ->
+                            let nodeId = fNodeId node.Node
+
+                            let setExpand isExpand _ =
+                                let newValue =
+                                    if isExpand then
+                                        expandIdSet.Current |> Set.add nodeId
+                                    else
+                                        expandIdSet.Current |> Set.remove nodeId
+
+                                expandIdSet.Set newValue
+
+                            Grid.columnDefinitions "Auto,Auto,*"
+
+                            Grid.children [
+                                ToggleButton.create [
+                                    ToggleButton.column 0
+                                    ToggleButton.isChecked node.IsExpand
+                                    ToggleButton.onChecked (setExpand true)
+                                    ToggleButton.onUnchecked (setExpand false)
+                                    // 参考
+                                    // https://github.com/AvaloniaUI/Avalonia/blob/master/src/Avalonia.Themes.Default/Controls/TreeViewItem.xaml#L43-L58
+                                    ToggleButton.template (fun x scope ->
+                                        Border.create [
+                                            Border.height 14
+                                            Border.width 12
+                                            Border.verticalAlignment VerticalAlignment.Center
+                                            Border.margin (0, 0, 8, 0)
+                                            Border.background Brushes.Transparent
+                                            Border.child (
+                                                Shapes.Path(
+                                                    HorizontalAlignment = HorizontalAlignment.Center,
+                                                    VerticalAlignment = VerticalAlignment.Center,
+                                                    Fill = x.GetValue ContentControl.ForegroundProperty,
+                                                    Data = Geometry.Parse "M 0 2 L 4 6 L 0 10 Z"
+                                                )
+                                            )
+                                            if node.IsExpand then
+                                                RotateTransform 45.0 |> Border.renderTransform
+                                        ])
+                                ]
+                                Border.create [
+                                    Border.column 1
+                                    Border.child (fNode data.Ids node)
+                                ]
+                            ]
+                    ]
+
+                ListBox.create [
+                    ListBox.dataItems expandItems.Current
+                    DataTemplateView<_>.create viewFunc
+                    |> ListBox.itemTemplate
+                ]
+        )
+
 /// ダミーデータ
 module Share =
     open System
@@ -95,7 +231,16 @@ module Share =
     let fromKind kind subitems : ShareItem = InternalNode(kind, subitems)
     let fromInfo info : ShareItem = LeafNode info
 
-    module rec Fakar =
+    let getId (item: ShareItem) =
+        match item with
+        | LeafNode info -> info.Id
+        | InternalNode (kind, _) -> kind.Id
+
+    let setSubtrees targetId subtrees (tree: ShareItem) =
+        tree
+        |> Tree.setSubtrees (fun kind -> kind.Id = targetId) (fun _ -> subtrees)
+
+    module Fakar =
 
         let kind () =
             { Id = Guid.NewGuid()
@@ -118,269 +263,107 @@ module Share =
             |> Seq.cache
 
 
-/// Viewで保持するTree型
-type HugeTreeViewItem<'leaf, 'node> = Tree<HugeTreeViewLeaf<'leaf>, HugeTreeViewNode<'node>>
 
-and HugeTreeViewLeaf<'leaf> = { Id: System.Guid; Data: 'leaf }
-
-and HugeTreeViewNode<'node> =
-    { Id: System.Guid
-      Data: 'node
-      IsExpand: bool }
-
-/// 実際に表示されるデータ型
-type ExpandedItem<'leaf, 'node> =
-    { Ids: System.Guid list
-      Data: Choice<HugeTreeViewLeaf<'leaf>, HugeTreeViewNode<'node>> }
-
-module HugeTreeViewItem =
-    let fromLeaf leaf : HugeTreeViewItem<'leaf, 'node> = LeafNode leaf
-    let fromNode node subItem : HugeTreeViewItem<'leaf, 'node> = InternalNode(node, subItem)
-
-    let create<'leaf, 'node> fLeafId fNodeId tree : HugeTreeViewItem<'leaf, 'node> =
-        let fLeaf leaf = { Id = fLeafId leaf; Data = leaf }
-
-        let fNode node =
-            { Id = fNodeId node
-              Data = node
-              IsExpand = false }
-
-        Tree.map fLeaf fNode tree
-
-    let update oldValueId fNode fLeaf (tree: HugeTreeViewItem<'leaf, 'node>) : HugeTreeViewItem<'leaf, 'node> =
-        tree
-        |> Tree.map
-            (fun leaf ->
-                if leaf.Id = oldValueId then
-                    fLeaf leaf
-                else
-                    leaf)
-            (fun node ->
-                if node.Id = oldValueId then
-                    fNode node
-                else
-                    node)
-
-    let setExpand isExpand (targetId: System.Guid) (tree: HugeTreeViewItem<'leaf, 'node>) =
-        update targetId (fun node -> { node with IsExpand = isExpand }) id tree
-
-
-    let expand (treeItem: HugeTreeViewItem<'leaf, 'node>) =
-        let rec loop state (trees: HugeTreeViewItem<'leaf, 'node> seq) =
-            trees
-            |> Seq.map (function
-                | LeafNode leaf -> seq { { Ids = state; Data = Choice1Of2 leaf } }
-                | InternalNode (node, subTree) ->
-                    seq {
-                        { Ids = state; Data = Choice2Of2 node }
-
-                        if node.IsExpand then
-                            yield! loop (state @ List.singleton node.Id) subTree
-                    })
-            |> Seq.concat
-
-        seq { treeItem } |> loop []
-
-    let getId (tree: HugeTreeViewItem<'leaf, 'node>) =
-        match tree with
-        | LeafNode leaf -> leaf.Id
-        | InternalNode (node, _) -> node.Id
-
-    let setSubtrees
-        (targetId: System.Guid)
-        (tree: HugeTreeViewItem<'leaf, 'node>)
-        (subtrees: HugeTreeViewItem<'leaf, 'node> seq)
-        =
-        tree
-        |> Tree.setSubtrees (fun node -> node.Id = targetId) (fun _ -> subtrees)
-
-#if INTERACTIVE
-module Test =
-
-    let root =
-        Share.fromKind
-            { Id = System.Guid.NewGuid()
-              Name = "root" }
-            (Share.Fakar.generate 5)
-
-    let item =
-        HugeTreeViewItem.create<Share.Info, Share.Kind> (fun info -> info.Id) (fun kind -> kind.Id) root
-
-    let v = HugeTreeViewItem.expand item |> Seq.toList
-
-    let item' = HugeTreeViewItem.setExpand true (HugeTreeViewItem.getId item) item
-
-
-    let v' = item' |> HugeTreeViewItem.expand |> Seq.toList
-
-    let v'' =
-        item'
-        |> HugeTreeViewItem.expand
-        |> Seq.tryPick (function
-            | { Data = Choice2Of2 node } when not node.IsExpand ->
-                HugeTreeViewItem.setExpand true node.Id item'
-                |> HugeTreeViewItem.expand
-                |> Some
-            | _ -> None)
-        |> Option.defaultValue Seq.empty
-        |> Seq.toList
-#else
-
-/// 大量のデータを扱えるTreeViewっぽいもの。
-/// AvaloniaのTreeViewは仮想化できないので大量のデータがあると遅い。
-/// https://github.com/AvaloniaUI/Avalonia/issues/6580
-///
-/// 対応するには仮想化できるItemRepeaterを使用する。
-/// https://github.com/kekekeks/example-avalonia-huge-tree/blob/master/AvaloniaHugeTree/MainWindow.xaml#L19-L36
-///
-/// この実装はコード量削減のためListBoxを使用。
-///
 module HugeTree =
-    open System
-
-    module Share =
-        let toTreeViewItem =
-            HugeTreeViewItem.create<Share.Info, Share.Kind> (fun info -> info.Id) (fun kind -> kind.Id)
-
-        let generateTreeViewItems max =
-            Share.Fakar.generate max |> Seq.map toTreeViewItem
-
-        let initRoot max =
-            Share.fromKind { Id = Guid.NewGuid(); Name = "root" } (Share.Fakar.generate max)
-            |> toTreeViewItem
-
-        let addSubItems max (node: HugeTreeViewNode<_>) tree =
-            generateTreeViewItems max
-            |> HugeTreeViewItem.setSubtrees node.Id tree
-
-    open Avalonia
     open Avalonia.Controls
-    open Avalonia.Controls.Primitives
-    open Avalonia.Controls.Templates
-    open Avalonia.Styling
     open Avalonia.Media
     open Avalonia.Layout
     open Avalonia.FuncUI
     open Avalonia.FuncUI.DSL
-    type TemplatedControl with
-        static member template(viewFunc: ITemplatedControl -> INameScope -> 'view) =
-            FuncControlTemplate(fun x scope -> viewFunc x scope |> VirtualDom.VirtualDom.create)
-            |> TemplatedControl.template
 
-    let conterStyle = [ Control.verticalAlignment VerticalAlignment.Center ]
+    type ExpandedTreeKind = TreeBox.ExpandedTreeNode<Share.Kind>
+    let headerfontSize = 20
 
-    /// リスト要素の表示関数
-    let viewFunc
-        (root: IWritable<HugeTreeViewItem<Share.Info, Share.Kind>>)
-        (max: IWritable<int>)
-        (data: ExpandedItem<Share.Info, Share.Kind>)
-        =
-        let left = 4 + (24 * List.length data.Ids)
-
-        let headerfontSize = 20
-
-
+    let leafView ids (leaf: Share.Info) =
         Grid.create [
-            Grid.margin (left, 4, 4, 4)
-            match data.Data with
-            | Choice1Of2 leaf ->
-                Grid.columnDefinitions "Auto,*"
-                Grid.rowDefinitions "Auto,Auto"
-
-                Grid.children [
-                    TextBlock.create [
-                        TextBlock.column 1
-                        TextBlock.row 0
-                        yield! conterStyle
-                        Control.margin (0, 0, 0, 4)
-                        TextBlock.fontSize headerfontSize
-                        TextBlock.text leaf.Data.Name
-                    ]
-                    TextBlock.create [
-                        TextBlock.column 1
-                        TextBlock.row 1
-                        yield! conterStyle
-                        TextBlock.textWrapping TextWrapping.WrapWithOverflow
-                        TextBlock.text leaf.Data.Description
-                    ]
+            Grid.rowDefinitions "Auto,Auto"
+            Grid.children [
+                TextBlock.create [
+                    TextBlock.row 0
+                    TextBlock.verticalAlignment VerticalAlignment.Center
+                    Control.margin (0, 0, 0, 4)
+                    TextBlock.fontSize headerfontSize
+                    TextBlock.text leaf.Name
                 ]
-            | Choice2Of2 node ->
-                let setSubtrees isExpand _ =
-                    HugeTreeViewItem.setExpand isExpand node.Id root.Current
-                    |> root.Set
-
-                let addSubItems _ =
-                    Share.addSubItems max.Current node root.Current
-                    |> root.Set
-
-                Grid.columnDefinitions "Auto,Auto,*"
-
-                Grid.children [
-                    ToggleButton.create [
-                        ToggleButton.column 0
-                        ToggleButton.isChecked node.IsExpand
-                        ToggleButton.onChecked (setSubtrees true)
-                        ToggleButton.onUnchecked (setSubtrees false)
-                        // 参考
-                        // https://github.com/AvaloniaUI/Avalonia/blob/master/src/Avalonia.Themes.Default/Controls/TreeViewItem.xaml#L43-L58
-                        ToggleButton.template (fun x scope ->
-                            Border.create [
-                                Border.height 14
-                                Border.width 12
-                                Border.verticalAlignment VerticalAlignment.Center
-                                Border.margin (0, 0, 8, 0)
-                                Border.background Brushes.Transparent
-                                Border.child (
-                                    Shapes.Path(
-                                        HorizontalAlignment = HorizontalAlignment.Center,
-                                        VerticalAlignment = VerticalAlignment.Center,
-                                        Fill = x.GetValue ContentControl.ForegroundProperty,
-                                        Data = Geometry.Parse "M 0 2 L 4 6 L 0 10 Z"
-                                    )
-                                )
-                                if node.IsExpand then
-                                    RotateTransform 45.0 |> Border.renderTransform
-                            ])
-                    ]
-                    Button.create [
-                        Button.column 1
-                        Button.content "Genetate"
-                        Button.onClick addSubItems
-                    ]
-                    TextBlock.create [
-                        TextBlock.column 2
-                        yield! conterStyle
-                        Control.margin (8, 0, 0, 0)
-                        TextBlock.fontSize headerfontSize
-                        TextBlock.text node.Data.Name
-                    ]
+                TextBlock.create [
+                    TextBlock.row 1
+                    TextBlock.verticalAlignment VerticalAlignment.Center
+                    TextBlock.textWrapping TextWrapping.WrapWithOverflow
+                    TextBlock.text leaf.Description
                 ]
+            ]
         ]
+
+
+    let nodeView addSubItems ids (node: ExpandedTreeKind) =
+        Grid.create [
+            Grid.columnDefinitions "Auto,*"
+            Grid.children [
+                Button.create [
+                    Button.column 0
+                    Button.content "Genetate"
+                    Button.onClick (addSubItems ids node)
+                ]
+
+                TextBlock.create [
+                    TextBlock.column 1
+                    TextBlock.verticalAlignment VerticalAlignment.Center
+                    Control.margin (8, 0, 0, 0)
+                    TextBlock.fontSize headerfontSize
+                    TextBlock.text node.Node.Name
+                ]
+            ]
+        ]
+
+    let shareTreeBox addSubItems =
+        TreeBox.create<Share.Info, Share.Kind> (fun kind -> kind.Id) leafView (nodeView addSubItems)
 
     let view =
         Component.create (
             "huge-tree",
             fun ctx ->
+                let initItems = 100
                 let max = ctx.useState (5000, false)
+                let roots = Share.Fakar.generate initItems |> ctx.useState
 
-                let root = Share.initRoot max.Current |> ctx.useState
-                let expanded = HugeTreeViewItem.expand root.Current
+                let resetRoots _ =
+                    Share.Fakar.generate initItems |> roots.Set
+
+                let addSubItems ids (node: ExpandedTreeKind) _ =
+                    let targetId =
+                        if List.isEmpty ids then
+                            node.Node.Id
+                        else
+                            List.head ids
+
+                    let (rootIdx, root) =
+                        roots.Current
+                        |> Seq.indexed
+                        |> Seq.find (fun (_, i) -> Share.getId i = targetId)
+
+
+                    let newValue =
+                        Share.setSubtrees node.Node.Id (Share.Fakar.generate max.Current) root
+
+                    roots.Current
+                    |> Seq.updateAt rootIdx newValue
+                    |> roots.Set
 
                 Grid.create [
                     Grid.rowDefinitions "Auto,*"
-                    Grid.columnDefinitions "Auto,Auto,Auto,*"
+                    Grid.columnDefinitions "Auto,Auto,Auto,*,Auto"
                     Grid.children [
                         TextBlock.create [
                             Control.row 0
                             Control.column 0
-                            yield! conterStyle
-                            TextBlock.text $"Count: {Seq.length expanded}"
+                            TextBlock.verticalAlignment VerticalAlignment.Center
+                            TextBlock.text $"Count: {Seq.sumBy Tree.length roots.Current}"
                         ]
                         TextBlock.create [
                             Control.row 0
                             Control.column 1
                             Control.margin (8, 0, 0, 0)
-                            yield! conterStyle
+                            TextBlock.verticalAlignment VerticalAlignment.Center
                             TextBlock.text "Max Generate Items:"
                         ]
                         NumericUpDown.create [
@@ -391,16 +374,18 @@ module HugeTree =
                             NumericUpDown.minimum 1
                             NumericUpDown.onValueChanged (int >> max.Set)
                         ]
-                        ListBox.create [
-                            ListBox.row 1
-                            Control.column 0
-                            Control.columnSpan 4
-                            ListBox.dataItems expanded
-                            viewFunc root max
-                            |> DataTemplateView<_>.create
-                            |> ListBox.itemTemplate
+                        Button.create [
+                            Control.row 0
+                            Control.column 4
+                            Button.content "Reset"
+                            Button.onClick resetRoots
                         ]
+                        shareTreeBox
+                            addSubItems
+                            roots
+                            [ Component.row 1
+                              Component.column 0
+                              Component.columnSpan 5 ]
                     ]
                 ]
         )
-#endif
