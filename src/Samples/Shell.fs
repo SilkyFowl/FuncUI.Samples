@@ -17,6 +17,10 @@ module Shell =
                         TabControl.tabStripPlacement Dock.Top
                         TabControl.viewItems [
                             TabItem.create [
+                                TabItem.header "Interactive"
+                                TabItem.content Interactive.view
+                            ]
+                            TabItem.create [
                                 TabItem.header "Huge Tree Sample"
                                 TabItem.content HugeTree.view
                             ]

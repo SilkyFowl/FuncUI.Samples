@@ -8,6 +8,7 @@
     <Compile Include="Counter.fs" />
     <Compile Include="About.fs" />
     <Compile Include="HugeTree.fs" />
+    <Compile Include="Interactive.fs" />
     <Compile Include="Shell.fs" />
     <Compile Include="Program.fs" />
     <AvaloniaResource Include="**\*.xaml" />
