@@ -13,15 +13,8 @@ module Interactive =
     open Avalonia.FuncUI
     open Avalonia.FuncUI.DSL
 
-
     let initText =
         $"""
-#r "nuget: Avalonia.Desktop"
-#r "nuget: JaggerJo.Avalonia.FuncUI"
-#r "nuget: JaggerJo.Avalonia.FuncUI.DSL"
-#r "nuget: JaggerJo.Avalonia.FuncUI.Elmish"
-#r "{Reflection.Assembly.GetEntryAssembly().GetName().Name}.dll"
-
 module Counter =
     open Avalonia.FuncUI
     open Avalonia.Controls
@@ -91,13 +84,30 @@ Counter.view  |> VirtualDom.create
     let errStream = new StringWriter(sbErr)
     let fsiConfig = FsiEvaluationSession.GetDefaultConfiguration()
 
+    /// F# インタラクティブに、このアプリのアセンブリと依存アセンブリを読み込むための引数。
+    let references =
+        let asm = Reflection.Assembly.GetEntryAssembly()
+
+        let deps =
+            asm.GetReferencedAssemblies()
+            |> Seq.map (fun asm -> asm.Name)
+
+        let path = (Directory.GetParent asm.Location).FullName
+
+        Directory.EnumerateFiles(path, "*.dll")
+        |> Seq.filter (fun p -> Seq.contains (Path.GetFileNameWithoutExtension p) deps)
+        |> Seq.map (fun p -> $"-r:{Path.GetFileName p}")
+        |> Seq.append (Seq.singleton $"-r:{asm.GetName().Name}")
 
     let fsiSession =
         FsiEvaluationSession.Create(
             fsiConfig,
             [| yield "fsi.exe"
                yield! argv
-               yield "--noninteractive" |],
+               yield "--noninteractive"
+               // 参照が F# インタラクティブ プロセスによってロックされないようにする。
+               yield "--shadowcopyreferences+"
+               yield! references |],
             inStream,
             outStream,
             errStream
