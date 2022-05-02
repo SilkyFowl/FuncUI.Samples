@@ -62,10 +62,7 @@ module Counter =
             ]
         )
 
-
-open Avalonia.FuncUI.VirtualDom
-
-Counter.view  |> VirtualDom.create
+Counter.view
     """
 
     let initResult =
@@ -130,7 +127,12 @@ Counter.view  |> VirtualDom.create
                     |> evalWarnings.Set
 
                     match res with
-                    | Choice1Of2 (Some value) -> value.ReflectionValue |> evalResult.Set
+                    | Choice1Of2 (Some value) ->
+                        match value.ReflectionValue with
+                        | :? Types.IView as view ->
+                            VirtualDom.VirtualDom.create view
+                            |> evalResult.Set
+                        | other -> other |> evalResult.Set
                     | Choice1Of2 None -> "null or no result" |> evalResult.Set
                     | Choice2Of2 (exn: exn) ->
                         [| box $"exception %s{exn.Message}" |]
