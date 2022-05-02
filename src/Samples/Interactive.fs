@@ -20,6 +20,7 @@ module Counter =
     open Avalonia.Controls
     open Avalonia.FuncUI.DSL
     open Avalonia.Layout
+    open Avalonia.Media
 
     let view =
         Component.create("Counter",fun ctx ->
@@ -54,6 +55,7 @@ module Counter =
                     ]
                     TextBlock.create [
                         TextBlock.dock Dock.Top
+                        TextBlock.foreground Brushes.White
                         TextBlock.fontSize 48.0
                         TextBlock.horizontalAlignment HorizontalAlignment.Center
                         TextBlock.text (string state.Current)
@@ -69,7 +71,7 @@ Counter.view
         TextBlock.create [
             TextBlock.verticalAlignment VerticalAlignment.Center
             TextBlock.horizontalAlignment HorizontalAlignment.Center
-            TextBlock.text "The variable 'view' is displayed as a result of the compile."
+            TextBlock.text "Results are displayed here."
         ]
         |> VirtualDom.VirtualDom.create
 
@@ -138,6 +140,16 @@ Counter.view
                         [| box $"exception %s{exn.Message}" |]
                         |> evalWarnings.Set
 
+                let tryEvalText text =
+                    if not <| String.IsNullOrEmpty text then
+                        task { evalInteraction text } |> ignore
+
+                ctx.useEffect (
+                    (fun _ ->
+                        evalText.Observable
+                        |> Observable.subscribe tryEvalText),
+                    [ EffectTrigger.AfterInit ]
+                )
 
                 Grid.create [
                     Grid.rowDefinitions "*,4,*,Auto"
@@ -158,13 +170,8 @@ Counter.view
                         ]
                         Button.create [
                             Button.row 3
-                            Button.content "eval"
-                            Button.onClick (fun _ ->
-                                task {
-                                    if not <| String.IsNullOrEmpty evalText.Current then
-                                        evalInteraction evalText.Current
-                                }
-                                |> ignore)
+                            Button.content "eval manualy"
+                            Button.onClick (fun _ -> tryEvalText evalText.Current)
                         ]
                     ]
                 ]
