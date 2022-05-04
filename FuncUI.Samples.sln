@@ -12,6 +12,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2943E306-195
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Samples", "src\Samples\Samples.fsproj", "{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Avalonia.FuncUI.Analyzer", "src\Avalonia.FuncUI.Analyzer\Avalonia.FuncUI.Analyzer.fsproj", "{9DD507D1-97D5-4B81-8044-32BED00ECB24}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -25,8 +27,13 @@ Global
 		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9DD507D1-97D5-4B81-8044-32BED00ECB24}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9DD507D1-97D5-4B81-8044-32BED00ECB24}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9DD507D1-97D5-4B81-8044-32BED00ECB24}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9DD507D1-97D5-4B81-8044-32BED00ECB24}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{986C7FB8-0F01-4A69-8511-1FD139F1BE9C} = {2943E306-1953-4F6E-B856-E0A2C5906A5B}
+		{9DD507D1-97D5-4B81-8044-32BED00ECB24} = {2943E306-1953-4F6E-B856-E0A2C5906A5B}
 	EndGlobalSection
 EndGlobal

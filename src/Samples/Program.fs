@@ -44,7 +44,6 @@ module Remote =
         let port = (l.LocalEndpoint :?> IPEndPoint).Port
         l.Stop()
         let transport = new BsonTcpTransport()
-
         let _ =
             transport.Listen(
                 IPAddress.Loopback,
