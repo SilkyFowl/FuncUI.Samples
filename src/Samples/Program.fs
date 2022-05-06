@@ -44,6 +44,7 @@ module Remote =
         let port = (l.LocalEndpoint :?> IPEndPoint).Port
         l.Stop()
         let transport = new BsonTcpTransport()
+
         let _ =
             transport.Listen(
                 IPAddress.Loopback,
@@ -70,10 +71,23 @@ module Remote =
         0
 
 module Program =
+
+    let debugLogArea: string [] =
+        [|
+        // "TreeBox"
+        |]
+
+    let level, area =
+        if Array.isEmpty debugLogArea then
+            Logging.LogEventLevel.Error, [||]
+        else
+            Logging.LogEventLevel.Debug, debugLogArea
+
     [<EntryPoint>]
     let main (args: string []) =
         AppBuilder
             .Configure<App>()
             .UsePlatformDetect()
             .UseSkia()
+            .LogToTrace(level, area)
             .StartWithClassicDesktopLifetime(args)

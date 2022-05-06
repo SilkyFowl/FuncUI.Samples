@@ -1,5 +1,20 @@
 namespace Samples
 
+module Logger =
+    open Avalonia.Logging
+
+    let inline tryLog level area (source:obj) message =
+        let logger = Logger.TryGet(level, area)
+
+        if logger.HasValue && logger.Value.IsValid then
+
+            logger.Value.Log(source,"{p}", message)
+
+
+    let debug = TraceLogSink(LogEventLevel.Debug)
+
+type PLogger = Avalonia.Logging.ParametrizedLogger
+
 /// 参考:https://fsharpforfunandprofit.com/posts/recursive-types-and-folds-3b/#tree
 type Tree<'LeafData, 'INodeData> =
     | LeafNode of 'LeafData
@@ -28,6 +43,17 @@ module Tree =
             finalAccum
 
     let length = fold (fun i _ -> i + 1) (fun i _ -> i + 1) 0
+
+    let contains value =
+        match value with
+        | LeafNode leaf ->
+            false
+            |> fold (fun state l -> state || l = leaf) (fun state _ -> state)
+        | InternalNode (node, _) ->
+            false
+            |> fold (fun state _ -> state) (fun state n -> state || n = node)
+
+    let notContains value tree = contains value tree |> not
 
     let rec map fLeaf fNode (tree: Tree<'LeafData, 'INodeData>) =
         let recurse = map fLeaf fNode
@@ -94,6 +120,8 @@ module TreeBox =
     open Avalonia.FuncUI
     open Avalonia.FuncUI.DSL
 
+    let log source message = Logger.tryLog Logging.LogEventLevel.Debug "TreeBox" source  message
+
     type TemplatedControl with
         static member template(viewFunc: ITemplatedControl -> INameScope -> 'view) =
             FuncControlTemplate(fun x scope -> viewFunc x scope |> VirtualDom.VirtualDom.create)
@@ -105,7 +133,7 @@ module TreeBox =
         { Ids: Guid list
           Data: Choice<'leaf, ExpandedTreeNode<'node>> }
 
-    let expandTree fNodeId (expandedSet: Set<Guid>) (trees: Tree<'leaf, 'node> seq) =
+    let expandTree (isRootVisible: bool) fNodeId (expandedSet: Set<Guid>) (tree: Tree<'leaf, 'node>) =
         let rec loop state trees' =
             trees'
             |> Seq.map (function
@@ -124,28 +152,62 @@ module TreeBox =
                     })
             |> Seq.concat
 
-        loop [] trees
+        match tree with
+        | InternalNode (_, subTree) when not isRootVisible -> subTree |> loop []
+        | _ -> Seq.singleton tree |> loop []
 
-    let create<'leaf, 'node>
+    module ExpandedTree =
+        let length (isRootVisible: bool) tree =
+            if isRootVisible then
+                Tree.length tree
+            else
+                (Tree.length tree) - 1
+
+    let create<'leaf, 'node when 'leaf: equality and 'node: equality>
         fNodeId
         fLeaf
         (fNode: _ -> _ -> Types.IView<_>)
-        (items: IWritable<Tree<'leaf, 'node> seq>)
+        (isRootVisible: bool)
+        (root: IWritable<Tree<'leaf, 'node>>)
+        keepSelectedItem
         attrs
         =
+
         Component.create (
             "tree-box",
             fun ctx ->
-                let expandIdSet = ctx.useState (Set.empty, false)
-                let expandItems = ctx.useState Seq.empty
+
+                let root = ctx.usePassedRead root
+                let expandIdSet = ctx.useState Set.empty
+
+                let expandItems =
+                    root
+                    |> State.readMap (expandTree isRootVisible fNodeId expandIdSet.Current)
+
+                let keepSelectedItem = ctx.usePassed (keepSelectedItem, false)
+                let outlet = ctx.useState (Unchecked.defaultof<ListBox>, false)
+                let selectedItem: IWritable<obj option> = ctx.useState (None, false)
+
 
                 ctx.useEffect (
                     (fun _ ->
-                        expandTree fNodeId expandIdSet.Current items.Current
-                        |> expandItems.Set),
-                    [ EffectTrigger.AfterInit
-                      EffectTrigger.AfterChange items
-                      EffectTrigger.AfterChange expandIdSet ]
+                        log ctx "rendered"
+
+                        keepSelectedItem.Set false
+
+                        match selectedItem.Current with
+                        | Some (:? ExpandedTreeItem<'leaf, 'node> as { Data = Choice1Of2 leaf }) ->
+                            if Tree.notContains (LeafNode leaf) root.Current then
+                                selectedItem.Set None
+                        | Some (:? ExpandedTreeItem<'leaf, 'node> as { Data = Choice2Of2 v }) ->
+                            if Tree.notContains (InternalNode(v.Node, [])) root.Current then
+                                selectedItem.Set None
+                        | _ -> ()
+
+
+                        log ctx $"selectedItem: {selectedItem.Current}"
+                        outlet.Current.SelectedItem <- Option.toObj selectedItem.Current),
+                    [ EffectTrigger.AfterRender ]
                 )
 
                 ctx.attrs attrs
@@ -161,6 +223,19 @@ module TreeBox =
                             let nodeId = fNodeId node.Node
 
                             let setExpand isExpand _ =
+                                log ctx $"expand staet"
+                                log ctx $"selectedItem: %A{selectedItem.Current}"
+
+                                match selectedItem.Current with
+                                | Some (:? ExpandedTreeItem<'leaf, 'node> as ({ Data = Choice2Of2 v } as item)) when
+                                    fNodeId v.Node = nodeId
+                                    ->
+                                    (box >> Some) { item with Data = Choice2Of2 { v with IsExpand = isExpand } }
+                                    |> selectedItem.Set
+                                | _ -> ()
+
+                                keepSelectedItem.Set true
+
                                 let newValue =
                                     if isExpand then
                                         expandIdSet.Current |> Set.add nodeId
@@ -168,6 +243,8 @@ module TreeBox =
                                         expandIdSet.Current |> Set.remove nodeId
 
                                 expandIdSet.Set newValue
+
+                                log ctx $"expand end"
 
                             Grid.columnDefinitions "Auto,Auto,*"
 
@@ -205,19 +282,29 @@ module TreeBox =
                             ]
                     ]
 
-                ListBox.create [
-                    ListBox.dataItems expandItems.Current
-                    DataTemplateView<_>.create viewFunc
-                    |> ListBox.itemTemplate
-                ]
+                View.createWithOutlet
+                    outlet.Set
+                    ListBox.create
+                    [ ListBox.dataItems expandItems.Current
+                      DataTemplateView<_>.create viewFunc
+                      |> ListBox.itemTemplate
+                      ListBox.onSelectedItemChanged (fun selected ->
+                          log outlet.Current.SelectionChanged $"selectedItem: %A{selectedItem.Current}"
+                          log outlet.Current.SelectionChanged $"selected: %A{selected}"
+
+                          match selected with
+                          | _ when keepSelectedItem.Current -> log outlet.Current.SelectionChanged "reject!!"
+
+
+                          | null -> selectedItem.Set None
+                          | v -> selectedItem.Set(Some v))
+                      Option.toObj selectedItem.Current
+                      |> ListBox.selectedItem ]
         )
 
 /// ダミーデータ
 module Share =
     open System
-
-    let fakar = Bogus.Faker "ja"
-    let random = Random()
 
     type Kind = { Id: Guid; Name: string }
 
@@ -241,6 +328,8 @@ module Share =
         |> Tree.setSubtrees (fun kind -> kind.Id = targetId) (fun _ -> subtrees)
 
     module Fakar =
+        let private fakar = Bogus.Faker "ja"
+        let private random = Random()
 
         let kind () =
             { Id = Guid.NewGuid()
@@ -249,7 +338,7 @@ module Share =
         let info () =
             { Id = Guid.NewGuid()
               Name = fakar.Commerce.ProductName()
-              Description = fakar.Commerce.ProductDescription() }
+              Description = fakar.Commerce.ProductDescription() + fakar.Commerce.ProductDescription() }
 
         let generate max =
             let gen =
@@ -262,16 +351,14 @@ module Share =
             }
             |> Seq.cache
 
-
-
-module HugeTree =
+module ShareTreeBox =
     open Avalonia.Controls
     open Avalonia.Media
     open Avalonia.Layout
-    open Avalonia.FuncUI
     open Avalonia.FuncUI.DSL
 
     type ExpandedTreeKind = TreeBox.ExpandedTreeNode<Share.Kind>
+
     let headerfontSize = 20
 
     let leafView ids (leaf: Share.Info) =
@@ -294,7 +381,6 @@ module HugeTree =
             ]
         ]
 
-
     let nodeView addSubItems ids (node: ExpandedTreeKind) =
         Grid.create [
             Grid.columnDefinitions "Auto,*"
@@ -302,7 +388,7 @@ module HugeTree =
                 Button.create [
                     Button.column 0
                     Button.content "Genetate"
-                    Button.onClick (addSubItems ids node)
+                    Button.onClick (addSubItems node)
                 ]
 
                 TextBlock.create [
@@ -315,39 +401,46 @@ module HugeTree =
             ]
         ]
 
-    let shareTreeBox addSubItems =
+    let create addSubItems =
         TreeBox.create<Share.Info, Share.Kind> (fun kind -> kind.Id) leafView (nodeView addSubItems)
 
+module HugeTree =
+    open Avalonia.Controls
+    open Avalonia.Layout
+    open Avalonia.FuncUI
+    open Avalonia.FuncUI.DSL
+
+    let rootKind: Share.Kind =
+        { Id = System.Guid.NewGuid()
+          Name = "root" }
+
+    let initRoot max =
+        Share.Fakar.generate max
+        |> Share.fromKind rootKind
+
     let view =
+
         Component.create (
             "huge-tree",
             fun ctx ->
+                let isRootVisible = false
                 let initItems = 100
                 let max = ctx.useState (5000, false)
-                let roots = Share.Fakar.generate initItems |> ctx.useState
 
-                let resetRoots _ =
-                    Share.Fakar.generate initItems |> roots.Set
+                let root = initRoot initItems |> ctx.useState
+                let keepSelectedItem = ctx.useState (false, false)
 
-                let addSubItems ids (node: ExpandedTreeKind) _ =
-                    let targetId =
-                        if List.isEmpty ids then
-                            node.Node.Id
-                        else
-                            List.head ids
+                let itemsCount =
+                    root
+                    |> State.readMap (TreeBox.ExpandedTree.length isRootVisible)
 
-                    let (rootIdx, root) =
-                        roots.Current
-                        |> Seq.indexed
-                        |> Seq.find (fun (_, i) -> Share.getId i = targetId)
+                let resetRoots _ = initRoot initItems |> root.Set
 
+                let addSubItems (node: ShareTreeBox.ExpandedTreeKind) _ =
+                    keepSelectedItem.Set true
 
-                    let newValue =
-                        Share.setSubtrees node.Node.Id (Share.Fakar.generate max.Current) root
-
-                    roots.Current
-                    |> Seq.updateAt rootIdx newValue
-                    |> roots.Set
+                    Share.setSubtrees node.Node.Id (Share.Fakar.generate max.Current) root.Current
+                    |> root.Set
 
                 Grid.create [
                     Grid.rowDefinitions "Auto,*"
@@ -357,7 +450,7 @@ module HugeTree =
                             Control.row 0
                             Control.column 0
                             TextBlock.verticalAlignment VerticalAlignment.Center
-                            TextBlock.text $"Count: {Seq.sumBy Tree.length roots.Current}"
+                            TextBlock.text $"Count: {itemsCount.Current}"
                         ]
                         TextBlock.create [
                             Control.row 0
@@ -380,9 +473,11 @@ module HugeTree =
                             Button.content "Reset"
                             Button.onClick resetRoots
                         ]
-                        shareTreeBox
+                        ShareTreeBox.create
                             addSubItems
-                            roots
+                            isRootVisible
+                            root
+                            keepSelectedItem
                             [ Component.row 1
                               Component.column 0
                               Component.columnSpan 5 ]
