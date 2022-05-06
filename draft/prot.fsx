@@ -3,7 +3,7 @@
 #r "nuget: JaggerJo.Avalonia.FuncUI"
 #r "nuget: JaggerJo.Avalonia.FuncUI.DSL"
 #r "nuget: JaggerJo.Avalonia.FuncUI.Elmish"
-#r "src/Samples/bin/Debug/net6.0/Samples.dll"
+#r "../src/Samples/bin/Debug/net6.0/Samples.dll"
 
 open Samples
 module Counter =
