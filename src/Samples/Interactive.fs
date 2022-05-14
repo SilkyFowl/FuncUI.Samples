@@ -46,6 +46,122 @@ module FsiSession =
             errStream
         )
 
+    open Avalonia.FuncUI
+    open Avalonia.FuncUI.VirtualDom
+
+    /// Evalを行う。
+    let evalInteraction
+        isCollectText
+        (fsiSession: FsiEvaluationSession)
+        (log: string -> unit)
+        (evalText: IWritable<string>)
+        (evalWarings: IWritable<_>)
+        (evalResult: IWritable<obj>)
+        =
+        let time = DateTime.Now.ToString "T"
+
+        if isCollectText evalText.Current then
+            let res, warnings = fsiSession.EvalInteractionNonThrowing evalText.Current
+
+            warnings
+            |> Array.map (fun w -> box $"Warning {w.Message} at {w.StartLine},{w.StartColumn}")
+            |> evalWarings.Set
+
+            match res with
+            | Choice1Of2 (Some value) ->
+
+                log $"{time} Eval Success."
+
+                match value.ReflectionValue with
+                | :? Types.IView as view ->
+                    fun _ ->
+                        VirtualDom.create view
+                        |> evalResult.Set
+                    |> Avalonia.Threading.Dispatcher.UIThread.Post
+                | other -> other |> evalResult.Set
+            | Choice1Of2 None -> log $"{time} Null or no result."
+            | Choice2Of2 (exn: exn) ->
+                log $"{time} Eval Failed."
+
+                [| box $"exception %s{exn.Message}" |]
+                |> evalWarings.Set
+        else
+            [| box "not collect file..." |] |> evalWarings.Set
+            log $"{time} no collect file.."
+
+
+module MessagePack =
+    open System
+    open System.Net.Sockets
+    open System.Net.NetworkInformation
+    open System.Threading
+    open MessagePack
+    open Avalonia.FuncUI.Analyzer
+    open Avalonia.FuncUI.Analyzer.MessagePack
+
+    let isActiveTcpListener ipAddredd port =
+        IPGlobalProperties
+            .GetIPGlobalProperties()
+            .GetActiveTcpListeners()
+        |> Array.exists (fun ep -> ep.Address = ipAddredd && ep.Port = port)
+
+    /// ``FuncUiAnalyzer`への接続が成功するまで`ConnectAsync`を行う。
+    /// `SocketException`以外のエラーになった場合は中断。
+    let tryConnectAsync (log: string -> unit) (client: TcpClient) retryMilliseconds =
+        task {
+            let mutable hasConnedted = false
+
+            while not hasConnedted do
+                try
+                    do! client.ConnectAsync(address = Server.iPAddress, port = Server.port)
+                    hasConnedted <- true
+                with
+                | :? SocketException as e ->
+                    log $"{e.SocketErrorCode}: {e.Message}"
+                    do! Tasks.Task.Delay(millisecondsDelay = retryMilliseconds)
+        }
+
+    /// `FuncUiAnalyzer`からデータを購読するためのクライアント。
+    let initClient (log: string -> unit) (setEvalText: string -> unit) =
+        let cts = new CancellationTokenSource()
+
+        let token = cts.Token
+
+        task {
+            use client = new TcpClient()
+
+            while isActiveTcpListener Server.iPAddress Server.port
+                  |> not do
+                log "FuncUiAnalyzer server is not Actice..."
+                do! Tasks.Task.Delay 1000
+
+            log "start connect..."
+            do! tryConnectAsync log client 1000
+            log "Connedted!!"
+            use reader = new MessagePackStreamReader(client.GetStream())
+
+            while not token.IsCancellationRequested do
+                let! result = reader.ReadAsync token
+                log $"read: {result}"
+
+                match ValueOption.ofNullable result with
+                | ValueSome buff ->
+                    let (Code content) =
+                        MessagePackSerializer.Deserialize<MessagePack.Msg>(&buff, options)
+
+                    content
+                    |> Array.filter (fun line -> line.StartsWith("#r") |> not)
+                    |> String.concat "\n"
+                    |> setEvalText
+
+                | ValueNone -> ()
+        }
+        |> ignore
+
+        { new IDisposable with
+            member _.Dispose() = cts.Cancel() }
+
+
 open System
 open Avalonia.Controls
 open Avalonia.Media
@@ -53,52 +169,45 @@ open Avalonia.Layout
 open Avalonia.FuncUI
 open Avalonia.FuncUI.DSL
 
-
 type StateStore =
     { EvalText: IWritable<string>
       EvalResult: IWritable<obj>
-      EvalWarings: IWritable<obj []> }
+      EvalWarings: IWritable<obj []>
+      Status: IWritable<string> }
 
 module StateStore =
     open System.Text.RegularExpressions
     let private fsiSession = FsiSession.create ()
 
+    /// この文字列が含まれていたらEvalする。
+    [<Literal>]
+    let MatchText = "//#funcuianalyzer"
+
+    /// Evalするかを判定する。
     let isCollectText text =
         not <| String.IsNullOrEmpty text
-        && Regex.IsMatch(text, "//#funcuianalyzer")
+        && Regex.IsMatch(text, MatchText)
 
-
+    /// `state`の情報に基づいてEvalする。
     let evalInteraction state =
-        if isCollectText state.EvalText.Current then
-            let res, warnings = fsiSession.EvalInteractionNonThrowing state.EvalText.Current
+        FsiSession.evalInteraction
+            isCollectText
+            fsiSession
+            state.Status.Set
+            state.EvalText
+            state.EvalWarings
+            state.EvalResult
 
-            warnings
-            |> Array.map (fun w -> box $"Warning {w.Message} at {w.StartLine},{w.StartColumn}")
-            |> state.EvalWarings.Set
-
-            match res with
-            | Choice1Of2 (Some value) ->
-                match value.ReflectionValue with
-                | :? Types.IView as view ->
-                    Avalonia.Threading.Dispatcher.UIThread.Post (fun _ ->
-                        VirtualDom.VirtualDom.create view
-                        |> state.EvalResult.Set)
-                | other -> other |> state.EvalResult.Set
-            | Choice1Of2 None -> "null or no result" |> state.EvalResult.Set
-            | Choice2Of2 (exn: exn) ->
-                [| box $"exception %s{exn.Message}" |]
-                |> state.EvalWarings.Set
-        else
-            [| box "not collect file..." |]
-            |> state.EvalWarings.Set
-
+    /// `evalInteraction`の非同期版。
     let evalInteractionAsync state _ =
         async { evalInteraction state }
         |> Async.StartImmediate
 
+    /// `StateStore`を初期化する。
     let init () =
         let initText =
             $"""
+{MatchText}
 module Counter =
     open Avalonia.FuncUI
     open Avalonia.Controls
@@ -161,37 +270,14 @@ Counter.view
 
         { EvalText = new State<_>(initText)
           EvalResult = new State<_>(box initResult)
-          EvalWarings = new State<_>([||]) }
+          EvalWarings = new State<_>([||])
+          Status = new State<_> "" }
 
+/// `Interactive`のStore。
+/// ※本来、Storeはアプリケーション一つだけであるのが望ましい。
 let shared = StateStore.init ()
 
-open Suave
-open Suave.Filters
-open Suave.Operators
-open Suave.Successful
-open System.Threading
-
-/// https://suave.io/index.html
-let surve =
-    let app =
-        PUT
-        >=> path "/funcuianalyzer"
-        >=> request (fun r ->
-            r.form
-            |> Map.ofList
-            |> Map.tryFind "eval"
-            |> Option.flatten
-            |> Option.iter shared.EvalText.Set
-
-            OK("PUT Received."))
-
-    let cts = new CancellationTokenSource()
-    let conf = { defaultConfig with cancellationToken = cts.Token }
-    let listening, server = startWebServerAsync conf app
-    Async.Start(server, cts.Token)
-
-    { new IDisposable with
-        member _.Dispose() = cts.Cancel() }
+let client = MessagePack.initClient shared.Status.Set shared.EvalText.Set
 
 let view =
 
@@ -199,43 +285,95 @@ let view =
         "interactive-file",
         fun ctx ->
 
+            // sharedの購読
             let evalText = ctx.usePassed (shared.EvalText, false)
             let evalResult = ctx.usePassed (shared.EvalResult)
             let evalWarnings = ctx.usePassed (shared.EvalWarings)
+            let status = ctx.usePassed shared.Status
 
-            ctx.trackDisposable surve
+            /// `true`ならEvalTextが更新されたら自動でEvalする。
+            let autoEval = ctx.useState true
+            /// `true`ならEvalTextを表示する。
+            let showEvalText = ctx.useState false
 
+            ctx.trackDisposable client
+
+            /// Evalを実行する。
             let evalInteractionAsync _ =
                 StateStore.evalInteractionAsync shared ()
 
             ctx.useEffect (
                 (fun _ ->
                     evalText.Observable
-                    |> Observable.subscribe evalInteractionAsync),
+                    |> Observable.subscribe (fun _ ->
+                        if autoEval.Current then
+                            evalInteractionAsync ())),
                 [ EffectTrigger.AfterInit ]
             )
 
             Grid.create [
-                Grid.rowDefinitions "*,4,*,Auto"
+                Grid.rowDefinitions "Auto,*,4,*,Auto"
+                Grid.columnDefinitions "Auto,*,Auto"
                 Grid.children [
-                    TextBox.create [
-                        TextBox.row 0
-                        TextBox.acceptsReturn true
-                        TextBox.textWrapping TextWrapping.Wrap
-                        TextBox.text evalText.Current
-                        TextBox.onTextChanged evalText.Set
-                        if not <| Array.isEmpty evalWarnings.Current then
-                            TextBox.errors evalWarnings.Current
+                    CheckBox.create [
+                        CheckBox.row 0
+                        CheckBox.column 0
+                        CheckBox.content "Show EvalText"
+                        CheckBox.isChecked showEvalText.Current
+                        CheckBox.onChecked (fun _ -> showEvalText.Set true)
+                        CheckBox.onUnchecked (fun _ -> showEvalText.Set false)
                     ]
-                    GridSplitter.create [ Grid.row 1 ]
+                    TextBox.create [
+                        TextBox.isVisible showEvalText.Current
+                        if showEvalText.Current then
+                            TextBox.row 1
+                            TextBox.column 0
+                            TextBox.columnSpan 3
+                            TextBox.acceptsReturn true
+                            TextBox.textWrapping TextWrapping.Wrap
+                            TextBox.text evalText.Current
+                            TextBox.onTextChanged evalText.Set
+
+                            if not <| Array.isEmpty evalWarnings.Current then
+                                TextBox.errors evalWarnings.Current
+                    ]
+                    GridSplitter.create [
+                        GridSplitter.isVisible showEvalText.Current
+                        if showEvalText.Current then
+                            GridSplitter.row 2
+                            GridSplitter.column 0
+                            GridSplitter.columnSpan 3
+                    ]
                     ContentControl.create [
-                        Border.row 2
+                        if showEvalText.Current then
+                            Border.row 3
+                        else
+                            Border.row 1
+                            Border.rowSpan 3
+                        TextBox.column 0
+                        TextBox.columnSpan 3
+                        TextBox.column 0
                         ContentControl.content evalResult.Current
                     ]
+                    CheckBox.create [
+                        CheckBox.row 4
+                        CheckBox.column 0
+                        CheckBox.content "Auto EvalText"
+                        CheckBox.isChecked autoEval.Current
+                        CheckBox.onChecked (fun _ -> autoEval.Set true)
+                        CheckBox.onUnchecked (fun _ -> autoEval.Set false)
+                    ]
                     Button.create [
-                        Button.row 3
+                        Button.row 4
+                        TextBox.column 1
+                        Button.horizontalAlignment HorizontalAlignment.Left
                         Button.content "eval manualy"
                         Button.onClick evalInteractionAsync
+                    ]
+                    TextBlock.create [
+                        TextBlock.row 5
+                        TextBlock.column 2
+                        TextBlock.text status.Current
                     ]
                 ]
             ]

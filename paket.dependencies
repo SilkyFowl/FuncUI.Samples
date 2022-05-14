@@ -1,14 +1,15 @@
 source https://api.nuget.org/v3/index.json
 
 storage: none
-framework: net6.0, netstandard2.0, netstandard2.1
-nuget Avalonia.Desktop 0.10.12
-nuget Avalonia.Diagnostics 0.10.12
+framework: net6.0
+nuget Avalonia.Desktop
+nuget Avalonia.Diagnostics
+nuget Avalonia.Remote.Protocol
 nuget Bogus
 nuget FSharp.Core content: none
 nuget FSharp.Compiler.Service
-nuget JaggerJo.Avalonia.FuncUI 0.5.0
-nuget JaggerJo.Avalonia.FuncUI.DSL 0.5.0
-nuget JaggerJo.Avalonia.FuncUI.Elmish 0.5.0
+nuget JaggerJo.Avalonia.FuncUI
+nuget JaggerJo.Avalonia.FuncUI.DSL
+nuget JaggerJo.Avalonia.FuncUI.Elmish
 nuget FSharp.Analyzers.SDK
-nuget Suave
+nuget MessagePack.FSharpExtensions

@@ -18,6 +18,7 @@
         {
             "name": ".NET Core Attach",
             "type": "coreclr",
+            "requireExactSource": false,
             "request": "attach"
         }
     ]

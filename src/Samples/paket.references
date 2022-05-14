@@ -6,4 +6,4 @@ JaggerJo.Avalonia.FuncUI.Elmish
 FSharp.Core
 Bogus
 FSharp.Compiler.Service
-Suave
+MessagePack.FSharpExtensions

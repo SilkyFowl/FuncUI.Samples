@@ -3,8 +3,6 @@
     "FSharp.analyzersPath": [
         "packages/Analyzers",
         "analyzers",
-        "src/Avalonia.FuncUI.Analyzer/bin/Release"
-
     ],
     "FSharp.inlayHints.disableLongTooltip": true
 }
