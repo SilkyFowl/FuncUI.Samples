@@ -1,0 +1,56 @@
+#!fsharp
+
+type Subject<'T>(?onNext, ?onError, ?onCompleted) =
+    let onNext = defaultArg onNext ignore
+    let onError = defaultArg onError ignore
+    let onCompleted = defaultArg onCompleted ignore
+
+    let sync = obj ()
+    let observers = ResizeArray<IObserver<'T>>()
+
+    member _.OnNext value =
+        lock sync (fun () ->
+            onNext value
+
+            for observer in observers do
+                observer.OnNext value)
+
+    member _.OnError ex =
+        lock sync (fun () ->
+            onError ex
+
+            for observer in observers do
+                observer.OnError ex)
+
+    member _.OnCompleted() =
+        lock sync (fun () ->
+            onCompleted ()
+
+            for observer in observers.ToArray() do
+                if observers.Contains observer then
+                    observer.OnCompleted()
+
+            observers.Clear())
+
+    member _.Subscribe observer =
+
+        lock sync (fun () ->
+            if observers.Contains observer |> not then
+                observers.Add observer)
+
+        { new IDisposable with
+            member _.Dispose() =
+                lock sync (fun () ->
+                    if observer <> null && observers.Contains observer then
+                        observers.Remove observer |> ignore) }
+
+    interface IObserver<'T> with
+        member x.OnCompleted() = x.OnCompleted()
+        member x.OnError ex = x.OnError ex
+        member x.OnNext value = x.OnNext value
+
+    interface IObservable<'T> with
+        member x.Subscribe observer = x.Subscribe observer
+
+    interface IDisposable with
+        member x.Dispose() = x.OnCompleted()
